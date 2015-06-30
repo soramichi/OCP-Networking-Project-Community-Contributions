@@ -168,6 +168,27 @@ typedef struct _sai_vendor_attribute_entry_t {
     void                *setter_arg;
 } sai_vendor_attribute_entry_t;
 
+/*
+  data structures for the data layer codes
+ */
+struct __switch {
+    sai_vlan_id_t default_port_vlan_id;
+    sai_mac_t src_mac_address;
+};
+
+struct __vlan {
+    sai_vlan_id_t id;
+    int number_of_ports;
+    sai_vlan_port_t* port_list;
+};
+
+struct __port {
+    sai_object_id_t id;
+    sai_vlan_id_t vlan;
+};
+
+#define VLAN_ID_NOT_ASSIGNED (9999)
+
 #define END_FUNCTIONALITY_ATTRIBS_ID 0xFFFFFFFF
 
 sai_status_t check_attribs_metadata(_In_ uint32_t                            attr_count,
@@ -229,6 +250,16 @@ sai_status_t stub_fill_s32list(int32_t *data, uint32_t count, sai_s32_list_t *li
 sai_status_t stub_fill_vlanlist(sai_vlan_id_t *data, uint32_t count, sai_vlan_list_t *list);
 
 void utils_log(const sai_log_level_t severity, const char *module_name, const char *p_str, ...);
+
+sai_status_t stub_create_vlan(_In_ sai_vlan_id_t vlan_id);
+sai_status_t stub_remove_vlan(_In_ sai_vlan_id_t vlan_id);
+sai_status_t stub_add_ports_to_vlan(_In_ sai_vlan_id_t          vlan_id,
+                                    _In_ uint32_t               port_count,
+                                    _In_ const sai_vlan_port_t* port_list);
+sai_status_t stub_remove_ports_from_vlan(_In_ sai_vlan_id_t          vlan_id,
+                                    _In_ uint32_t               port_count,
+                                    _In_ const sai_vlan_port_t* port_list);
+struct __vlan* find_vlan(sai_vlan_id_t vlan_id);
 
 #define QUOTEME_(x) #x                        /* add "" to x */
 #define QUOTEME(x)  QUOTEME_(x)

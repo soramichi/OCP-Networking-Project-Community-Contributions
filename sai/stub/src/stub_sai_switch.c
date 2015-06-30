@@ -24,6 +24,12 @@
 sai_switch_notification_t g_notification_callbacks;
 uint32_t                  gh_sdk = 0;
 
+struct __switch* stub_switch; // `switch' is a reserved keyword thus we use a long name
+
+const int number_of_ports = 10;
+sai_vlan_port_t* ports;
+sai_vlan_id_t* port_vlans;
+
 sai_status_t stub_switch_port_number_get(_In_ const sai_object_key_t   *key,
                                          _Inout_ sai_attribute_value_t *value,
                                          _In_ uint32_t                  attr_index,
@@ -155,6 +161,9 @@ sai_status_t stub_switch_mode_set(_In_ const sai_object_key_t      *key,
 sai_status_t stub_switch_default_port_vlan_set(_In_ const sai_object_key_t      *key,
                                                _In_ const sai_attribute_value_t *value,
                                                void                             *arg);
+sai_status_t stub_switch_src_mac_set(_In_ const sai_object_key_t      *key,
+				     _In_ const sai_attribute_value_t *value,
+				     void                             *arg);
 sai_status_t stub_switch_aging_time_set(_In_ const sai_object_key_t      *key,
                                         _In_ const sai_attribute_value_t *value,
                                         void                             *arg);
@@ -344,10 +353,10 @@ static const sai_vendor_attribute_entry_t switch_vendor_attribs[] = {
       stub_switch_default_port_vlan_get, NULL,
       stub_switch_default_port_vlan_set, NULL },
     { SAI_SWITCH_ATTR_SRC_MAC_ADDRESS,
-      { false, false, false, true },
+      { false, false, true, true },
       { false, false, true, true },
       stub_switch_src_mac_get, NULL,
-      NULL, NULL },
+      stub_switch_src_mac_set, NULL },
     { SAI_SWITCH_ATTR_MAX_LEARNED_ADDRESSES,
       { false, false, false, false },
       { false, false, true, true },
@@ -435,7 +444,6 @@ static const sai_vendor_attribute_entry_t switch_vendor_attribs[] = {
       NULL, NULL },
 };
 
-
 /*
  * Routine Description:
  *   SDK initialization. After the call the capability attributes should be
@@ -456,6 +464,8 @@ sai_status_t stub_initialize_switch(_In_ sai_switch_profile_id_t                
                                     _In_reads_opt_z_(SAI_MAX_FIRMWARE_PATH_NAME_LEN) char* firmware_path_name,
                                     _In_ sai_switch_notification_t                       * switch_notifications)
 {
+    int i;
+
     if (NULL == switch_hardware_id) {
         fprintf(stderr, "NULL switch hardware ID passed to SAI switch initialize\n");
         return SAI_STATUS_INVALID_PARAMETER;
@@ -475,6 +485,28 @@ sai_status_t stub_initialize_switch(_In_ sai_switch_profile_id_t                
 #endif
 
     STUB_LOG_NTC("Initialize switch\n");
+
+    stub_switch = (struct __switch*)malloc(sizeof(struct __switch));
+    if (stub_switch == NULL) {
+        STUB_LOG_ERR("Cannot allocate sufficient amount of memory for the switch.\n");
+	return SAI_STATUS_NO_MEMORY;
+    }
+
+    ports = (sai_vlan_port_t*)malloc(sizeof(sai_vlan_port_t) * number_of_ports);
+    port_vlans = (sai_vlan_id_t*)malloc(sizeof(sai_vlan_id_t) * number_of_ports);
+    if (ports == NULL || port_vlans == NULL) {
+        STUB_LOG_ERR("Cannot allocate sufficient amount of memory for the ports.\n");
+	return SAI_STATUS_NO_MEMORY;
+    }
+    for (i = 0; i < number_of_ports; i++) {
+        ports[i].port_id = i;
+	ports[i].tagging_mode = SAI_VLAN_PORT_TAGGED;
+	port_vlans[i] = VLAN_ID_NOT_ASSIGNED;
+    }
+
+    stub_switch->default_port_vlan_id = 1;
+    stub_create_vlan(1);
+    stub_add_ports_to_vlan(1, number_of_ports, ports);
 
     db_init_next_hop_group();
 
@@ -609,6 +641,32 @@ sai_status_t stub_switch_default_port_vlan_set(_In_ const sai_object_key_t      
                                                void                             *arg)
 {
     STUB_LOG_ENTER();
+
+    sai_status_t ret;
+    sai_vlan_id_t vlan_id_new = (*value).u16;
+    struct __vlan* vlan_current;
+
+    // create a new vlan
+    ret = stub_create_vlan(vlan_id_new);
+    if (ret != SAI_STATUS_SUCCESS) {
+      return ret;
+    }
+
+    // retrieving the current default vlan.
+    // This must be executed after stub_create_vlan(vlan_id_new), which realloc()s vlans
+    vlan_current = find_vlan(stub_switch->default_port_vlan_id);
+
+    STUB_LOG_NTC("Default vlan changed from %u to %u\n", vlan_current->id, vlan_id_new);
+
+    // Add ports of old default vlan to the new default vlan.
+    sai_vlan_port_t* ports_to_add = (sai_vlan_port_t*)malloc(sizeof(sai_vlan_port_t) * vlan_current->number_of_ports);
+    memcpy(ports_to_add, vlan_current->port_list, sizeof(sai_vlan_port_t) * vlan_current->number_of_ports);
+    stub_add_ports_to_vlan(vlan_id_new, vlan_current->number_of_ports, ports_to_add);
+    free(ports_to_add);
+
+    // set the default vlan to the new id and remove the old one
+    stub_switch->default_port_vlan_id = vlan_id_new;
+    stub_remove_vlan(vlan_current->id);
 
     STUB_LOG_EXIT();
     return SAI_STATUS_SUCCESS;
@@ -812,7 +870,7 @@ sai_status_t stub_switch_port_number_get(_In_ const sai_object_key_t   *key,
 {
     STUB_LOG_ENTER();
 
-    value->u32 = 0;
+    value->u32 = number_of_ports;
 
     STUB_LOG_EXIT();
     return SAI_STATUS_SUCCESS;
@@ -826,6 +884,24 @@ sai_status_t stub_switch_port_list_get(_In_ const sai_object_key_t   *key,
                                        void                          *arg)
 {
     STUB_LOG_ENTER();
+
+    sai_object_list_t port_list;
+    int i;
+
+    port_list.count = number_of_ports;
+    port_list.list = (sai_object_id_t*)malloc(sizeof(sai_object_id_t) * number_of_ports);
+
+    if (port_list.list == NULL) {
+        STUB_LOG_ERR("Cannot allocate sufficient amount of memory.\n");
+	return SAI_STATUS_NO_MEMORY;
+    }
+    else {
+      for (i = 0; i < number_of_ports; i++) {
+	  port_list.list[i] = ports[i].port_id;
+      }
+
+      (*value).objlist = port_list;
+    }
 
     STUB_LOG_EXIT();
     return SAI_STATUS_SUCCESS;
@@ -1026,7 +1102,7 @@ sai_status_t stub_switch_default_port_vlan_get(_In_ const sai_object_key_t   *ke
 {
     STUB_LOG_ENTER();
 
-    value->u16 = 1;
+    value->u16 = stub_switch->default_port_vlan_id;
 
     STUB_LOG_EXIT();
     return SAI_STATUS_SUCCESS;
@@ -1040,6 +1116,21 @@ sai_status_t stub_switch_src_mac_get(_In_ const sai_object_key_t   *key,
                                      void                          *arg)
 {
     STUB_LOG_ENTER();
+
+    memcpy((*value).mac, stub_switch->src_mac_address, 6);
+
+    STUB_LOG_EXIT();
+    return SAI_STATUS_SUCCESS;
+}
+
+/* Default switch MAC Address [sai_mac_t] */
+sai_status_t stub_switch_src_mac_set(_In_ const sai_object_key_t      *key,
+				     _In_ const sai_attribute_value_t *value,
+				     void                             *arg)
+{
+    STUB_LOG_ENTER();
+
+    memcpy(stub_switch->src_mac_address, (*value).mac, 6);
 
     STUB_LOG_EXIT();
     return SAI_STATUS_SUCCESS;

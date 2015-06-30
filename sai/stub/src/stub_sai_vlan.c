@@ -28,12 +28,10 @@
 static int number_of_vlans;
 struct __vlan* vlans = NULL;
 
-struct __vlan {
-    sai_vlan_id_t id;
-    int number_of_ports;
-    sai_vlan_port_t* port_list;
-};
-
+/* Instantiated in stub_sai_switch.c */
+extern struct __switch* stub_switch;
+extern int number_of_ports;
+extern sai_vlan_id_t* port_vlans;
 
 static const sai_attribute_entry_t vlan_attribs[] = {
     {   SAI_VLAN_ATTR_MAX_LEARNED_ADDRESSES, false, false, true, true,
@@ -46,6 +44,20 @@ static const sai_attribute_entry_t vlan_attribs[] = {
         "", SAI_ATTR_VAL_TYPE_UNDETERMINED
     }
 };
+
+struct __vlan* find_vlan(sai_vlan_id_t vlan_id){
+    int i;
+
+    for (i = 0; i < number_of_vlans; i++) {
+        if (vlans[i].id == vlan_id) {
+	    // given vla_id found
+	    return &vlans[i];
+        }
+    }
+
+    // the given vlan_id not found
+    return NULL;
+}
 
 sai_status_t stub_vlan_max_learned_addr_get(_In_ const sai_object_key_t   *key,
                                             _Inout_ sai_attribute_value_t *value,
@@ -234,6 +246,8 @@ sai_status_t stub_remove_vlan(_In_ sai_vlan_id_t vlan_id)
         return SAI_STATUS_INVALID_VLAN_ID;
     }
 
+    struct __vlan* target_vlan = &vlans[index_removed_vlan];
+
     // delete the vlans[index_removed_vlan]
     for (i = 0; i < number_of_vlans; i++) {
         if (i > index_removed_vlan) {
@@ -241,6 +255,9 @@ sai_status_t stub_remove_vlan(_In_ sai_vlan_id_t vlan_id)
         }
     }
     number_of_vlans--;
+    if (target_vlan->port_list != NULL) {
+        free(target_vlan->port_list);
+    }
     vlans = realloc(vlans, sizeof(struct __vlan) * number_of_vlans);
     // Note: realloc(ptr, 0) returns NULL, which is not an error
     if (vlans == NULL && number_of_vlans > 0) {
@@ -272,7 +289,7 @@ sai_status_t stub_add_ports_to_vlan(_In_ sai_vlan_id_t          vlan_id,
 {
     STUB_LOG_ENTER();
 
-    char key_str[MAX_KEY_STR_LEN];
+    char key_str[MAX_KEY_STR_LEN], msg[256];
     int i, index_target_vlan = -1;
 
     vlan_key_to_str(vlan_id, key_str);
@@ -289,6 +306,20 @@ sai_status_t stub_add_ports_to_vlan(_In_ sai_vlan_id_t          vlan_id,
         return SAI_STATUS_INVALID_VLAN_ID;
     }
 
+    // remove the given ports from the old vlan to which they have belonged
+    for (i = 0; i < (int)port_count; i++) {
+        if ((int)port_list[i].port_id >= number_of_ports){
+	    STUB_LOG_ERR("the given port id (%d) is too large\n", port_list[i].port_id);
+	    return SAI_STATUS_INVALID_PORT_NUMBER;
+	}
+
+	sai_vlan_id_t old_vlan = port_vlans[port_list[i].port_id];
+	if (old_vlan != VLAN_ID_NOT_ASSIGNED) {
+	    stub_remove_ports_from_vlan(old_vlan, 1, &port_list[i]);
+	}
+	port_vlans[port_list[i].port_id] = vlan_id;
+    }
+
     struct __vlan* v = &vlans[index_target_vlan];
     int old_size = v->number_of_ports, new_size = old_size + port_count;
     v->port_list = realloc(v->port_list, new_size * sizeof(sai_vlan_port_t));
@@ -300,6 +331,18 @@ sai_status_t stub_add_ports_to_vlan(_In_ sai_vlan_id_t          vlan_id,
 
     v->number_of_ports = new_size;
     memcpy(v->port_list + old_size, port_list, port_count * sizeof(sai_vlan_port_t));
+
+    sprintf(msg, "Ports added to VLAN(%u):", vlan_id);
+    for (i = 0; i < v->number_of_ports; i++) {
+        sprintf(msg, "%s %d", msg, (int)v->port_list[i].port_id);
+    }
+    STUB_LOG_NTC("%s\n", msg);
+
+    sprintf(msg, "Vlan assigned to each port:");
+    for (i = 0; i < /*global*/number_of_ports; i++) {
+        sprintf(msg, "%s %d", msg, port_vlans[i]);
+    }
+    STUB_LOG_NTC("%s\n", msg);
 
     return SAI_STATUS_SUCCESS;
 }
@@ -318,8 +361,15 @@ static int remove_a_port_from_vlan(struct __vlan* v, sai_vlan_port_t port)
                 v->port_list[j - 1] = v->port_list[j];
             }
 
+	    // exec delete
             (v->number_of_ports)--;
             v->port_list = realloc(v->port_list, sizeof(sai_vlan_port_t) * v->number_of_ports);
+
+	    // add this port to the default vlan,
+	    // except when it is deleted from the default vlan
+	    if (v->id != stub_switch->default_port_vlan_id) {
+	        stub_add_ports_to_vlan(stub_switch->default_port_vlan_id, 1, &port);
+	    }
 
             break;
         }
