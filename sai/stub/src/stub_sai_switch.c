@@ -27,7 +27,7 @@ uint32_t                  gh_sdk = 0;
 struct __switch* stub_switch; // `switch' is a reserved keyword thus we use a long name
 
 const int number_of_ports = 10;
-sai_vlan_port_t* ports;
+sai_object_id_t* ports;
 sai_vlan_id_t* port_vlans;
 
 sai_status_t stub_switch_port_number_get(_In_ const sai_object_key_t   *key,
@@ -492,21 +492,26 @@ sai_status_t stub_initialize_switch(_In_ sai_switch_profile_id_t                
 	return SAI_STATUS_NO_MEMORY;
     }
 
-    ports = (sai_vlan_port_t*)malloc(sizeof(sai_vlan_port_t) * number_of_ports);
+    ports = (sai_object_id_t*)malloc(sizeof(sai_object_id_t) * number_of_ports);
     port_vlans = (sai_vlan_id_t*)malloc(sizeof(sai_vlan_id_t) * number_of_ports);
     if (ports == NULL || port_vlans == NULL) {
         STUB_LOG_ERR("Cannot allocate sufficient amount of memory for the ports.\n");
 	return SAI_STATUS_NO_MEMORY;
     }
     for (i = 0; i < number_of_ports; i++) {
-        ports[i].port_id = i;
-	ports[i].tagging_mode = SAI_VLAN_PORT_TAGGED;
+        ports[i] = i;
 	port_vlans[i] = VLAN_ID_NOT_ASSIGNED;
     }
 
+    sai_vlan_port_t* vlan_ports = (sai_vlan_port_t*)malloc(sizeof(sai_vlan_port_t) * number_of_ports);
+    for (i = 0; i < number_of_ports; i++) {
+        vlan_ports[i].port_id = ports[i];
+	vlan_ports[i].tagging_mode = SAI_VLAN_PORT_TAGGED;
+    }
     stub_switch->default_port_vlan_id = 1;
     stub_create_vlan(1);
-    stub_add_ports_to_vlan(1, number_of_ports, ports);
+    stub_add_ports_to_vlan(1, number_of_ports, vlan_ports);
+    free(vlan_ports);
 
     db_init_next_hop_group();
 
@@ -885,26 +890,22 @@ sai_status_t stub_switch_port_list_get(_In_ const sai_object_key_t   *key,
 {
     STUB_LOG_ENTER();
 
-    sai_object_list_t port_list;
-    int i;
+    sai_status_t ret;
 
-    port_list.count = number_of_ports;
-    port_list.list = (sai_object_id_t*)malloc(sizeof(sai_object_id_t) * number_of_ports);
-
-    if (port_list.list == NULL) {
-        STUB_LOG_ERR("Cannot allocate sufficient amount of memory.\n");
-	return SAI_STATUS_NO_MEMORY;
+    if ((int)value->objlist.count < number_of_ports) {
+        STUB_LOG_NTC("The given buffer does not have sufficient length\n");
+	value->objlist.count = number_of_ports;
+	return SAI_STATUS_BUFFER_OVERFLOW;
     }
-    else {
-      for (i = 0; i < number_of_ports; i++) {
-	  port_list.list[i] = ports[i].port_id;
-      }
-
-      (*value).objlist = port_list;
+    else if (value->objlist.list == NULL) {
+        STUB_LOG_ERR("The given buffer points an invalid address\n");
+	return SAI_STATUS_INVALID_PARAMETER;
     }
+
+    ret = stub_fill_objlist(ports, number_of_ports, &value->objlist);
 
     STUB_LOG_EXIT();
-    return SAI_STATUS_SUCCESS;
+    return ret;
 }
 
 /* Get the CPU Port [sai_object_id_t] */
