@@ -182,11 +182,6 @@ struct __vlan {
     sai_vlan_port_t* port_list;
 };
 
-struct __port {
-    sai_object_id_t id;
-    sai_vlan_id_t vlan;
-};
-
 #define VLAN_ID_NOT_ASSIGNED (9999)
 
 #define END_FUNCTIONALITY_ATTRIBS_ID 0xFFFFFFFF
