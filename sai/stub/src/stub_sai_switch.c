@@ -902,6 +902,7 @@ sai_status_t stub_switch_port_list_get(_In_ const sai_object_key_t   *key,
 	return SAI_STATUS_INVALID_PARAMETER;
     }
 
+    value->objlist.count = number_of_ports;
     ret = stub_fill_objlist(ports, number_of_ports, &value->objlist);
 
     STUB_LOG_EXIT();
