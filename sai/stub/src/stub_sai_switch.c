@@ -890,20 +890,7 @@ sai_status_t stub_switch_port_list_get(_In_ const sai_object_key_t   *key,
 {
     STUB_LOG_ENTER();
 
-    sai_status_t ret;
-
-    if ((int)value->objlist.count < number_of_ports) {
-        STUB_LOG_NTC("The given buffer does not have sufficient length\n");
-	value->objlist.count = number_of_ports;
-	return SAI_STATUS_BUFFER_OVERFLOW;
-    }
-    else if (value->objlist.list == NULL) {
-        STUB_LOG_ERR("The given buffer points an invalid address\n");
-	return SAI_STATUS_INVALID_PARAMETER;
-    }
-
-    value->objlist.count = number_of_ports;
-    ret = stub_fill_objlist(ports, number_of_ports, &value->objlist);
+    sai_status_t ret = stub_fill_objlist(ports, number_of_ports, &value->objlist);
 
     STUB_LOG_EXIT();
     return ret;
