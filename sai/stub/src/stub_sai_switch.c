@@ -28,7 +28,7 @@ struct __switch* stub_switch; // `switch' is a reserved keyword thus we use a lo
 
 const int number_of_ports = 10;
 sai_object_id_t* ports;
-sai_vlan_id_t* port_vlans;
+sai_vlan_id_t* port_vlans_untagged; // mapping from port id to the untagged mode vlan id it belongs
 
 sai_status_t stub_switch_port_number_get(_In_ const sai_object_key_t   *key,
                                          _Inout_ sai_attribute_value_t *value,
@@ -493,20 +493,20 @@ sai_status_t stub_initialize_switch(_In_ sai_switch_profile_id_t                
     }
 
     ports = (sai_object_id_t*)malloc(sizeof(sai_object_id_t) * number_of_ports);
-    port_vlans = (sai_vlan_id_t*)malloc(sizeof(sai_vlan_id_t) * number_of_ports);
-    if (ports == NULL || port_vlans == NULL) {
+    port_vlans_untagged = (sai_vlan_id_t*)malloc(sizeof(sai_vlan_id_t) * number_of_ports);
+    if (ports == NULL || port_vlans_untagged == NULL) {
         STUB_LOG_ERR("Cannot allocate sufficient amount of memory for the ports.\n");
 	return SAI_STATUS_NO_MEMORY;
     }
     for (i = 0; i < number_of_ports; i++) {
         ports[i] = i;
-	port_vlans[i] = VLAN_ID_NOT_ASSIGNED;
+	port_vlans_untagged[i] = VLAN_ID_NOT_ASSIGNED;
     }
 
     sai_vlan_port_t* vlan_ports = (sai_vlan_port_t*)malloc(sizeof(sai_vlan_port_t) * number_of_ports);
     for (i = 0; i < number_of_ports; i++) {
         vlan_ports[i].port_id = ports[i];
-	vlan_ports[i].tagging_mode = SAI_VLAN_PORT_TAGGED;
+	vlan_ports[i].tagging_mode = SAI_VLAN_PORT_UNTAGGED;
     }
     stub_switch->default_port_vlan_id = 1;
     stub_create_vlan(1);

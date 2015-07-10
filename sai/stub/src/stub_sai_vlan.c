@@ -31,7 +31,7 @@ struct __vlan* vlans = NULL;
 /* Instantiated in stub_sai_switch.c */
 extern struct __switch* stub_switch;
 extern int number_of_ports;
-extern sai_vlan_id_t* port_vlans;
+extern sai_vlan_id_t* port_vlans_untagged;
 
 static const sai_attribute_entry_t vlan_attribs[] = {
     {   SAI_VLAN_ATTR_MAX_LEARNED_ADDRESSES, false, false, true, true,
@@ -306,20 +306,23 @@ sai_status_t stub_add_ports_to_vlan(_In_ sai_vlan_id_t          vlan_id,
         return SAI_STATUS_INVALID_VLAN_ID;
     }
 
-    // remove the given ports from the old vlan to which they have belonged
+    // if untagged mode, remove the given ports from the old vlan to which they have belonged
     for (i = 0; i < (int)port_count; i++) {
         if ((int)port_list[i].port_id >= number_of_ports){
 	    STUB_LOG_ERR("the given port id (%d) is too large\n", port_list[i].port_id);
 	    return SAI_STATUS_INVALID_PORT_NUMBER;
 	}
 
-	sai_vlan_id_t old_vlan = port_vlans[port_list[i].port_id];
-	if (old_vlan != VLAN_ID_NOT_ASSIGNED) {
-	    stub_remove_ports_from_vlan(old_vlan, 1, &port_list[i]);
+	if(port_list[i].tagging_mode == SAI_VLAN_PORT_UNTAGGED) {
+	    sai_vlan_id_t old_vlan = port_vlans_untagged[port_list[i].port_id];
+	    if (old_vlan != VLAN_ID_NOT_ASSIGNED) {
+	        stub_remove_ports_from_vlan(old_vlan, 1, &port_list[i]);
+	    }
+	    port_vlans_untagged[port_list[i].port_id] = vlan_id;
 	}
-	port_vlans[port_list[i].port_id] = vlan_id;
     }
 
+    // add given ports to the vlan
     struct __vlan* v = &vlans[index_target_vlan];
     int old_size = v->number_of_ports, new_size = old_size + port_count;
     v->port_list = realloc(v->port_list, new_size * sizeof(sai_vlan_port_t));
@@ -332,17 +335,19 @@ sai_status_t stub_add_ports_to_vlan(_In_ sai_vlan_id_t          vlan_id,
     v->number_of_ports = new_size;
     memcpy(v->port_list + old_size, port_list, port_count * sizeof(sai_vlan_port_t));
 
-    sprintf(msg, "Ports added to VLAN(%u):", vlan_id);
-    for (i = 0; i < v->number_of_ports; i++) {
-        sprintf(msg, "%s %d", msg, (int)v->port_list[i].port_id);
-    }
-    STUB_LOG_NTC("%s\n", msg);
+    for (i = 0; i < number_of_vlans; i++) {
+      struct __vlan* v = &vlans[i];
+      int p;
 
-    sprintf(msg, "Vlan assigned to each port:");
-    for (i = 0; i < /*global*/number_of_ports; i++) {
-        sprintf(msg, "%s %d", msg, port_vlans[i]);
+      sprintf(msg, "Ports in VLAN(%u):", v->id);
+
+      for (p = 0; p < v->number_of_ports; p++) {
+	char mode = (v->port_list[p].tagging_mode == SAI_VLAN_PORT_UNTAGGED ? 'u' : 't');
+	sprintf(msg, "%s %d(%c)", msg, (int)v->port_list[p].port_id, mode);
+      }
+
+      STUB_LOG_NTC("%s\n", msg);
     }
-    STUB_LOG_NTC("%s\n", msg);
 
     return SAI_STATUS_SUCCESS;
 }
@@ -353,7 +358,11 @@ static int remove_a_port_from_vlan(struct __vlan* v, sai_vlan_port_t port)
     int deleted = 0;
 
     for (i = 0; i < v->number_of_ports; i++) {
-        if (port.port_id == v->port_list[i].port_id) {
+        // must be retrieved before realloc()ing
+        sai_object_id_t id_this_port = v->port_list[i].port_id;
+	sai_vlan_tagging_mode_t mode_this_port = v->port_list[i].tagging_mode;
+
+	if (port.port_id == id_this_port && port.tagging_mode == mode_this_port) {
             // delete this port
             deleted = 1;
 
@@ -365,9 +374,9 @@ static int remove_a_port_from_vlan(struct __vlan* v, sai_vlan_port_t port)
             (v->number_of_ports)--;
             v->port_list = realloc(v->port_list, sizeof(sai_vlan_port_t) * v->number_of_ports);
 
-	    // add this port to the default vlan,
-	    // except when it is deleted from the default vlan
-	    if (v->id != stub_switch->default_port_vlan_id) {
+	    // when deleting an untagged mode port, add this port to the default vlan
+	    // (except when it is deleted from the default vlan)
+	    if (mode_this_port == SAI_VLAN_PORT_UNTAGGED && v->id != stub_switch->default_port_vlan_id) {
 	        stub_add_ports_to_vlan(stub_switch->default_port_vlan_id, 1, &port);
 	    }
 
